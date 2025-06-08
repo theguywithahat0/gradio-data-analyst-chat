@@ -1,0 +1,21 @@
+# Core dependencies
+gradio>=4.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Google Cloud dependencies
+google-cloud-aiplatform>=1.38.0
+google-cloud-firestore>=2.13.0
+google-auth>=2.23.0
+
+# File processing
+openpyxl>=3.1.0  # For Excel files
+pyarrow>=14.0.0  # For Parquet files
+
+# Development and utilities
+python-dotenv>=1.0.0
+gunicorn>=21.0.0  # For production deployment
+
+# Optional: PDF generation (uncomment if needed)
+# reportlab>=4.0.0
+# weasyprint>=60.0 
