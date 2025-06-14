@@ -13,11 +13,15 @@ import os
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 import uuid
+from dotenv import load_dotenv
 
 from chat_handler import ChatHandler
 from history import HistoryManager
 from auth import AuthManager
 from utils import FileHandler, ExportManager
+
+# Load environment variables
+load_dotenv()
 
 # Configuration
 TITLE = "🤖 Data Analyst Chat"
@@ -36,7 +40,6 @@ export_manager = ExportManager()
 class DataAnalystChatApp:
     def __init__(self):
         self.current_user = None
-        self.current_session_id = str(uuid.uuid4())
         
     def authenticate_user(self, request: gr.Request) -> Optional[str]:
         """Extract user information from the request"""
@@ -53,24 +56,25 @@ class DataAnalystChatApp:
         self, 
         message: str, 
         history: List[List[str]], 
+        session_id: str,
         request: gr.Request
-    ) -> Tuple[List[List[str]], str]:
+    ) -> Tuple[List[List[str]], str, str]:
         """Handle chat messages and return response"""
         if not message.strip():
-            return history, ""
+            return history, "", session_id
         
         # Authenticate user
         user = self.authenticate_user(request)
         if not user:
             history.append([message, "❌ Authentication required"])
-            return history, ""
+            return history, "", session_id
         
         try:
             # Get response from agent
             agent_response = chat_handler.send_message(
                 message=message,
                 user_id=user,
-                session_id=self.current_session_id
+                session_id=session_id
             )
             
             # Add to history
@@ -79,18 +83,18 @@ class DataAnalystChatApp:
             # Save conversation history
             history_manager.save_conversation(
                 user_id=user,
-                session_id=self.current_session_id,
+                session_id=session_id,
                 user_message=message,
                 agent_response=agent_response["response"],
                 metadata=agent_response.get("metadata", {})
             )
             
-            return history, ""
+            return history, "", session_id
             
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
             history.append([message, error_msg])
-            return history, ""
+            return history, "", session_id
     
     def upload_file(
         self, 
@@ -132,6 +136,7 @@ Please analyze this data and provide insights."""
         self, 
         history: List[List[str]], 
         format: str,
+        session_id: str,
         request: gr.Request
     ) -> gr.File:
         """Export conversation history"""
@@ -144,7 +149,7 @@ Please analyze this data and provide insights."""
                 history=history,
                 format=format,
                 user_id=user,
-                session_id=self.current_session_id
+                session_id=session_id
             )
             return gr.File(export_path)
         except Exception as e:
@@ -190,10 +195,9 @@ Please analyze this data and provide insights."""
             print(f"Conversation load error: {e}")
             return []
     
-    def clear_chat(self) -> Tuple[List, str]:
+    def clear_chat(self) -> Tuple[List, str, str]:
         """Clear current chat and start new session"""
-        self.current_session_id = str(uuid.uuid4())
-        return [], ""
+        return [], "", str(uuid.uuid4())
     
     def create_interface(self) -> gr.Blocks:
         """Create the Gradio interface"""
@@ -210,6 +214,8 @@ Please analyze this data and provide insights."""
             """
         ) as interface:
             
+            session_id_state = gr.State(str(uuid.uuid4()))
+
             gr.Markdown(f"# {TITLE}")
             gr.Markdown(DESCRIPTION)
             
@@ -234,7 +240,13 @@ Please analyze this data and provide insights."""
                     
                     with gr.Row():
                         clear_btn = gr.Button("🗑️ New Chat", variant="secondary")
-                        export_btn = gr.Button("📥 Export Chat", variant="secondary")
+                        export_format = gr.Dropdown(
+                            ["json", "csv", "txt"], 
+                            label="Export Format", 
+                            value="json", 
+                            scale=1
+                        )
+                        export_btn = gr.Button("📥 Export Chat", variant="secondary", scale=1)
                 
                 with gr.Column(scale=1):
                     # File upload section
@@ -250,73 +262,60 @@ Please analyze this data and provide insights."""
                         lines=2
                     )
                     
-                    # Export options
-                    gr.Markdown("### 📊 Export Options")
-                    export_format = gr.Radio(
-                        choices=["JSON", "CSV", "PDF"],
-                        value="JSON",
-                        label="Export Format"
-                    )
-                    export_file = gr.File(label="Download Export")
-                    
-                    # Conversation history
-                    gr.Markdown("### 📜 Recent Conversations")
+                    # History section
+                    gr.Markdown("### 📜 Conversation History")
                     history_dropdown = gr.Dropdown(
-                        label="Load Previous Chat",
-                        choices=[],
-                        interactive=True
+                        label="Load a past conversation",
+                        choices=[]
                     )
-                    load_history_btn = gr.Button("Load Chat", variant="secondary")
+                    load_history_btn = gr.Button("Load")
             
             # Event handlers
             msg_input.submit(
-                fn=self.chat_response,
-                inputs=[msg_input, chatbot],
-                outputs=[chatbot, msg_input]
-            ).then(
-                fn=lambda: gr.update(choices=self.load_conversation_history(gr.Request())),
-                outputs=[history_dropdown]
+                self.chat_response,
+                inputs=[msg_input, chatbot, session_id_state],
+                outputs=[chatbot, msg_input, session_id_state]
             )
             
             send_btn.click(
-                fn=self.chat_response,
-                inputs=[msg_input, chatbot],
-                outputs=[chatbot, msg_input]
-            ).then(
-                fn=lambda: gr.update(choices=self.load_conversation_history(gr.Request())),
-                outputs=[history_dropdown]
+                self.chat_response,
+                inputs=[msg_input, chatbot, session_id_state],
+                outputs=[chatbot, msg_input, session_id_state]
             )
             
             file_upload.upload(
-                fn=self.upload_file,
+                self.upload_file,
                 inputs=[file_upload],
                 outputs=[upload_status, msg_input]
             )
             
-            export_btn.click(
-                fn=self.export_conversation,
-                inputs=[chatbot, export_format],
-                outputs=[export_file]
+            clear_btn.click(
+                self.clear_chat, 
+                inputs=[], 
+                outputs=[chatbot, msg_input, session_id_state]
             )
             
-            clear_btn.click(
-                fn=self.clear_chat,
-                outputs=[chatbot, msg_input]
-            ).then(
-                fn=lambda: gr.update(choices=self.load_conversation_history(gr.Request())),
+            export_btn.click(
+                self.export_conversation,
+                inputs=[chatbot, export_format, session_id_state],
+                outputs=[gr.File(label="Exported File")]
+            )
+            
+            # History loading
+            def update_history_choices(request: gr.Request):
+                choices = self.load_conversation_history(request)
+                return gr.Dropdown(choices=choices)
+
+            interface.load(
+                update_history_choices,
+                inputs=[],
                 outputs=[history_dropdown]
             )
             
             load_history_btn.click(
-                fn=self.load_specific_conversation,
+                self.load_specific_conversation,
                 inputs=[history_dropdown],
                 outputs=[chatbot]
-            )
-            
-            # Load conversation history on startup
-            interface.load(
-                fn=self.load_conversation_history,
-                outputs=[history_dropdown]
             )
         
         return interface
