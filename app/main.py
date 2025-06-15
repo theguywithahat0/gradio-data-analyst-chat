@@ -14,6 +14,9 @@ from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 import uuid
 from dotenv import load_dotenv
+import google.auth
+import google.auth.transport.requests
+import requests
 
 from chat_handler import ChatHandler
 from history import HistoryManager
@@ -44,9 +47,38 @@ class DataAnalystChatApp:
     def authenticate_user(self, request: gr.Request) -> Optional[str]:
         """Extract user information from the request"""
         try:
-            # In production with IAP, user info will be in headers
-            user_email = request.headers.get("X-Goog-Authenticated-User-Email", "anonymous@example.com")
-            self.current_user = user_email.replace("accounts.google.com:", "")
+            # Check if we're using IAP (production)
+            if os.getenv("USE_IAP", "false").lower() == "true":
+                user_email = request.headers.get("X-Goog-Authenticated-User-Email", "anonymous@example.com")
+                self.current_user = user_email.replace("accounts.google.com:", "")
+            else:
+                # For local development, get the authenticated user from gcloud
+                try:
+                    creds, project = google.auth.default()
+                    # Try to get user info from the credentials
+                    if hasattr(creds, 'service_account_email'):
+                        self.current_user = creds.service_account_email
+                    else:
+                        # For user credentials, we need to make a request to get user info
+                        # Refresh credentials if needed
+                        if not creds.valid:
+                            auth_req = google.auth.transport.requests.Request()
+                            creds.refresh(auth_req)
+                        
+                        # Get user info from Google's userinfo endpoint
+                        response = requests.get(
+                            'https://www.googleapis.com/oauth2/v1/userinfo',
+                            headers={'Authorization': f'Bearer {creds.token}'}
+                        )
+                        if response.status_code == 200:
+                            user_info = response.json()
+                            self.current_user = user_info.get('email', 'unknown@example.com')
+                        else:
+                            self.current_user = os.getenv("MOCK_USER_EMAIL", "test@example.com")
+                except Exception as auth_error:
+                    print(f"Failed to get authenticated user: {auth_error}")
+                    self.current_user = os.getenv("MOCK_USER_EMAIL", "test@example.com")
+            
             return self.current_user
         except Exception as e:
             print(f"Auth error: {e}")
