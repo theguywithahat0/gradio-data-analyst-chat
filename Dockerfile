@@ -8,6 +8,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better Docker layer caching
@@ -21,10 +22,10 @@ COPY app/ ./app/
 COPY .env* ./
 
 # Create necessary directories
-RUN mkdir -p ./uploads ./exports ./chat_history
+RUN mkdir -p ./exports ./chat_history
 
 # Set environment variables
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/app
 ENV PORT=8080
 ENV HOST=0.0.0.0
 
